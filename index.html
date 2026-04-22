@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="JARVIS control panel for monitoring job automation activity."
+    />
+    <title>JARVIS Control Panel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-card">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <rect x="4.25" y="4.25" width="15.5" height="15.5" rx="3.5"></rect>
+              <path d="M12 2.75V6.5M12 17.5v3.75M2.75 12H6.5m11 0h3.75M5.8 5.8l2.66 2.66m7.08 7.08 2.66 2.66m0-12.4-2.66 2.66M8.46 15.54 5.8 18.2M9.25 9.25h5.5v5.5h-5.5z"></path>
+            </svg>
+          </div>
+          <div>
+            <p class="brand-title">JARVIS</p>
+            <p class="brand-subtitle">Control Panel</p>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <p class="sidebar-label">Workspace</p>
+          <nav class="nav-list" aria-label="Primary">
+            <button class="nav-item" data-route="dashboard" type="button">
+              <span class="nav-icon" data-icon="dashboard"></span>
+              <span>Dashboard</span>
+            </button>
+            <button class="nav-item" data-route="queue" type="button">
+              <span class="nav-icon" data-icon="queue"></span>
+              <span>Job Queue</span>
+            </button>
+            <button class="nav-item" data-route="logs" type="button">
+              <span class="nav-icon" data-icon="logs"></span>
+              <span>Logs</span>
+            </button>
+            <button class="nav-item" data-route="settings" type="button">
+              <span class="nav-icon" data-icon="settings"></span>
+              <span>Settings</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="sidebar-footer">
+          <p class="sidebar-label">Platform</p>
+          <div class="platform-card">
+            <div>
+              <p class="platform-name">Naukri</p>
+              <p class="platform-subtitle">Primary engine target</p>
+            </div>
+            <div class="platform-stats">
+              <span>47 queued</span>
+              <span>82% success</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="topbar-left">
+            <button class="menu-button" id="menuButton" type="button" aria-label="Open navigation">
+              <span></span>
+              <span></span>
+              <span></span>
+            </button>
+
+            <div class="status-pill" id="engineStatusPill">
+              <span class="status-dot"></span>
+              <strong id="engineStatusLabel">Stopped</strong>
+              <span class="status-divider">&middot;</span>
+              <span class="status-platform">Naukri</span>
+            </div>
+
+            <div class="clock-strip">
+              <span class="clock-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="8.25"></circle>
+                  <path d="M12 7.5v5l3.5 2"></path>
+                </svg>
+              </span>
+              <span id="clockText"></span>
+            </div>
+          </div>
+
+          <div class="topbar-actions">
+            <button class="action-button action-button-primary" id="startButton" type="button">
+              <span class="action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 6.5v11l9-5.5z"></path>
+                </svg>
+              </span>
+              <span>Start</span>
+            </button>
+            <button class="action-button action-button-secondary" id="stopButton" type="button">
+              <span class="action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="7" y="7" width="10" height="10" rx="1.5"></rect>
+                </svg>
+              </span>
+              <span>Stop</span>
+            </button>
+          </div>
+        </header>
+
+        <main class="page-frame">
+          <div id="pageRoot" class="page-root"></div>
+        </main>
+      </div>
+    </div>
+
+    <button
+      class="sidebar-backdrop"
+      id="sidebarBackdrop"
+      type="button"
+      aria-label="Close navigation"
+    ></button>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

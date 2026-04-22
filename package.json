@@ -1,0 +1,10 @@
+{
+  "name": "job-search-companion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JARVIS control panel UI",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  }
+}
