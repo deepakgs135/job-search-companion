@@ -1,0 +1,238 @@
+{
+  "personal_details": {
+    "name": "Deepak Kumar G S",
+    "email": "deepakgs135@gmail.com",
+    "phone": "8148065606",
+    "location": "Salem, Tamil Nadu, India",
+    "date_of_birth": "2004-05-13",
+    "nationality": "Indian",
+    "role": "AI Engineer",
+    "experience_years": 1,
+    "notice_period": "Immediate to 30 days"
+  },
+  "academic": {
+    "degree": "B.Tech Artificial Intelligence and Data Science",
+    "college": "Coimbatore Institute of Technology",
+    "cgpa": 7.7,
+    "duration": "2021-2025",
+    "school": {
+      "name": "Royal International School",
+      "percentage": 82,
+      "location": "Namakkal"
+    }
+  },
+  "internships": [
+    {
+      "company": "Effitrac Solutions",
+      "role": "Data Analyst Intern",
+      "duration": "Aug 2022 - Dec 2022",
+      "location": "Coimbatore",
+      "problem": "Businesses lacked clear insights into customer behavior and sales trends from e-commerce datasets.",
+      "solution": "Developed predictive models to analyze customer behavior and forecast sales trends using machine learning techniques.",
+      "workflow": [
+        "Collected and cleaned Amazon e-commerce dataset",
+        "Performed exploratory data analysis",
+        "Engineered features for modeling",
+        "Built predictive ML models",
+        "Evaluated performance and generated insights"
+      ],
+      "tech_stack": ["Python", "Machine Learning", "Pandas", "NumPy"],
+      "impact": [
+        "Improved business decision-making",
+        "Enabled sales forecasting",
+        "Identified customer behavior patterns"
+      ]
+    },
+    {
+      "company": "KGIT Services",
+      "role": "NLP Intern",
+      "duration": "Jun 2022 - Jul 2022",
+      "location": "Bangalore",
+      "problem": "Unstructured web content lacked organization and topic classification.",
+      "solution": "Built NLP-based topic modeling system to cluster and categorize text data using unsupervised learning.",
+      "workflow": [
+        "Collected text data from multiple sources",
+        "Performed preprocessing and tokenization",
+        "Applied LDA topic modeling",
+        "Clustered and labeled topics",
+        "Evaluated coherence scores"
+      ],
+      "tech_stack": ["Python", "NLP", "LDA", "Scikit-learn"],
+      "impact": [
+        "Improved content categorization",
+        "Enabled better information organization"
+      ]
+    },
+    {
+      "company": "Magnus Vista",
+      "role": "Deep Learning Engineer Intern",
+      "duration": "Feb 2024 - Mar 2024",
+      "location": "Coimbatore",
+      "problem": "Waste classification required accurate automated image recognition.",
+      "solution": "Developed CNN-based classification system for garbage detection.",
+      "workflow": [
+        "Collected and preprocessed image dataset",
+        "Fine-tuned MobileNet, ResNet, EfficientNet",
+        "Built custom CNN models",
+        "Trained and evaluated models",
+        "Optimized accuracy using augmentation"
+      ],
+      "tech_stack": ["TensorFlow", "PyTorch", "CNN", "Computer Vision"],
+      "impact": [
+        "Improved classification accuracy",
+        "Enabled automated waste detection"
+      ]
+    }
+  ],
+  "work_experience": [
+    {
+      "company": "OneData Software Solutions",
+      "role": "AI/IoT Engineer",
+      "duration": "Mar 2025 - Present",
+      "location": "Coimbatore",
+      "projects": [
+        {
+          "name": "Sophia / OneReach",
+          "type": "RAG System",
+          "problem": "Enterprise data was difficult to query efficiently using traditional methods.",
+          "solution": "Built a RAG-based conversational AI system enabling semantic search and intelligent responses.",
+          "workflow": [
+            "Data ingestion from enterprise sources",
+            "Text preprocessing and chunking",
+            "Embedding generation",
+            "Vector storage using PostgreSQL pgvector",
+            "Semantic search retrieval",
+            "LLM-based response generation"
+          ],
+          "tech_stack": [
+            "Python",
+            "LangChain",
+            "PostgreSQL (pgvector)",
+            "OpenAI API",
+            "Semantic Search"
+          ],
+          "impact": [
+            "Improved data accessibility",
+            "Enabled natural language querying",
+            "Reduced manual lookup time"
+          ]
+        },
+        {
+          "name": "ZF Pattern Detection",
+          "type": "Industrial AI",
+          "problem": "Industrial datasets required automated anomaly detection.",
+          "solution": "Developed AI-based anomaly detection system using ML and OpenCV.",
+          "workflow": [
+            "Data preprocessing and cleaning",
+            "Feature extraction",
+            "Model training",
+            "Real-time anomaly detection",
+            "Result monitoring"
+          ],
+          "tech_stack": ["Python", "OpenCV", "Machine Learning"],
+          "impact": [
+            "Improved anomaly detection accuracy",
+            "Enabled real-time monitoring"
+          ]
+        },
+        {
+          "name": "Indoor Personnel Tracking System",
+          "type": "IoT System",
+          "problem": "Industries lacked real-time tracking of personnel for safety and monitoring.",
+          "solution": "Built BLE-based indoor tracking system with real-time monitoring.",
+          "workflow": [
+            "BLE signal data collection",
+            "Location estimation algorithms",
+            "Data pipeline for tracking",
+            "Alert generation system",
+            "Dashboard visualization"
+          ],
+          "tech_stack": ["Python", "BLE", "Data Pipelines"],
+          "impact": [
+            "Improved safety monitoring",
+            "Enabled real-time tracking",
+            "Enhanced operational visibility"
+          ]
+        }
+      ]
+    }
+  ],
+  "college_projects": [
+    {
+      "name": "Termite Classification",
+      "problem": "Manual classification of termite species was inefficient.",
+      "solution": "Built ML-based classification system achieving high accuracy.",
+      "workflow": [
+        "Dataset collection",
+        "Feature extraction",
+        "Model training (Random Forest, CNN)",
+        "Evaluation and optimization",
+        "Web app integration"
+      ],
+      "tech_stack": ["Python", "Random Forest", "CNN", "React.js"],
+      "impact": [
+        "Achieved 99% accuracy",
+        "Published research paper"
+      ]
+    },
+    {
+      "name": "Facial Emotion Recognition",
+      "problem": "Real-time emotion detection required accurate deep learning models.",
+      "solution": "Developed CNN-based system for emotion recognition.",
+      "workflow": [
+        "Dataset preprocessing",
+        "Model training",
+        "Data augmentation",
+        "Evaluation and tuning",
+        "Real-time deployment"
+      ],
+      "tech_stack": ["CNN", "TensorFlow", "Deep Learning"],
+      "impact": [
+        "Achieved 97% accuracy",
+        "Applied in real-time systems"
+      ]
+    },
+    {
+      "name": "Versatile AI Avatar",
+      "problem": "Need for natural conversational digital human interface.",
+      "solution": "Built LLM-driven avatar with speech and facial animation.",
+      "workflow": [
+        "Speech-to-text processing",
+        "LLM response generation",
+        "Text-to-speech synthesis",
+        "Facial animation generation",
+        "Real-time interaction system"
+      ],
+      "tech_stack": ["LLM", "NLP", "Speech Processing"],
+      "impact": [
+        "Presented in international conference",
+        "Improved human-computer interaction"
+      ]
+    }
+  ],
+  "skills": {
+    "core": ["LLM", "RAG", "Semantic Search", "Vector Embeddings"],
+    "languages": ["Python", "SQL", "C"],
+    "backend": ["FastAPI", "Flask"],
+    "databases": ["PostgreSQL", "MongoDB", "MySQL", "pgvector"],
+    "ai_tools": ["LangChain", "LangGraph", "Ollama", "OpenAI API"],
+    "ml": ["Machine Learning", "Deep Learning", "NLP", "Computer Vision"],
+    "frameworks": ["TensorFlow", "PyTorch", "Scikit-learn"],
+    "tools": ["Git", "Docker", "Linux"]
+  },
+  "publications": [
+    {
+      "title": "Machine Learning-Based Classification of Termite Genera",
+      "conference": "IEEE International Conference on AI in Engineering and Technology",
+      "date": "2024-06-26",
+      "summary": "Developed ML models achieving 99% accuracy for termite classification."
+    }
+  ],
+  "patents": [
+    {
+      "title": "Generative AI and Holographic Visualization for Education",
+      "date": "2024-03",
+      "summary": "Developed system converting speech into visual holographic learning content."
+    }
+  ]
+}
