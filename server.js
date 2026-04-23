@@ -17,6 +17,70 @@ const mimeTypes = {
   ".ico": "image/x-icon"
 };
 
+function safeReadJson(filePath, fallback) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return fallback;
+    }
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function getFileMeta(filePath, relativePath) {
+  if (!fs.existsSync(filePath)) {
+    return {
+      path: relativePath,
+      exists: false,
+      updatedAt: null,
+      size: 0
+    };
+  }
+
+  const stats = fs.statSync(filePath);
+  return {
+    path: relativePath,
+    exists: true,
+    updatedAt: stats.mtime.toISOString(),
+    size: stats.size
+  };
+}
+
+function buildRuntimePayload() {
+  const statePath = path.join(root, "state.json");
+  const jobsPath = path.join(root, "app", "data", "jobs.json");
+  const stateData = safeReadJson(statePath, {});
+  const jobs = safeReadJson(jobsPath, []);
+  const cookies = Array.isArray(stateData.cookies) ? stateData.cookies : [];
+  const origins = Array.isArray(stateData.origins) ? stateData.origins : [];
+  const authenticated = cookies.some(
+    (cookie) =>
+      cookie &&
+      (
+        (cookie.name === "is_login" && String(cookie.value) === "1")
+        || cookie.name === "nauk_at"
+      )
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    jobs: Array.isArray(jobs) ? jobs : [],
+    jobsCount: Array.isArray(jobs) ? jobs.length : 0,
+    session: {
+      connected: authenticated,
+      authenticated,
+      hasState: fs.existsSync(statePath),
+      cookieCount: cookies.length,
+      originCount: origins.length
+    },
+    files: {
+      jobs: getFileMeta(jobsPath, "app/data/jobs.json"),
+      state: getFileMeta(statePath, "state.json")
+    }
+  };
+}
+
 function resolveFile(urlPath) {
   const requestPath = urlPath === "/" ? "/index.html" : urlPath;
   const normalized = path.normalize(requestPath).replace(/^(\.\.[/\\])+/, "");
@@ -31,6 +95,17 @@ function resolveFile(urlPath) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (url.pathname === "/api/runtime") {
+    const payload = buildRuntimePayload();
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store"
+    });
+    res.end(JSON.stringify(payload));
+    return;
+  }
+
   const filePath = resolveFile(url.pathname);
   const extension = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[extension] || "application/octet-stream";

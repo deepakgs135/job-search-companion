@@ -76,6 +76,12 @@ const iconMap = {
       <path d="M12 5v14M5 12h14"></path>
     </svg>
   `,
+  refresh: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M20 11a8 8 0 1 0 2 5.5"></path>
+      <path d="M20 4v7h-7"></path>
+    </svg>
+  `,
   queued: `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5"></circle>
@@ -288,35 +294,16 @@ menuButton.addEventListener("click", () => {
 backdrop.addEventListener("click", closeSidebar);
 
 startButton.addEventListener("click", () => {
-  if (state.engineStatus === "running") {
-    return;
-  }
-  state.engineStatus = "running";
-  prependLog({
-    time: formatTimeForLog(new Date()),
-    level: "success",
-    text: "Run resumed manually from control panel"
-  });
-  persistState();
-  render();
+  fetchRuntimeData();
 });
 
 stopButton.addEventListener("click", () => {
-  if (state.engineStatus === "stopped") {
-    return;
-  }
-  state.engineStatus = "stopped";
-  prependLog({
-    time: formatTimeForLog(new Date()),
-    level: "warning",
-    text: "Engine paused manually from control panel"
-  });
-  persistState();
-  render();
+  setRoute("queue");
 });
 
 window.addEventListener("hashchange", () => {
   state.route = getRouteFromHash();
+  fetchRuntimeData();
   render();
 });
 
@@ -328,13 +315,13 @@ window.addEventListener("resize", () => {
 
 updateClock();
 setInterval(updateClock, 1000);
+fetchRuntimeData();
 render();
 
 function loadState() {
   const saved = safeParse(localStorage.getItem(storageKey));
   return {
     route: getRouteFromHash(),
-    engineStatus: saved?.engineStatus === "running" ? "running" : "stopped",
     queueFilter: saved?.queueFilter || "All",
     queueSearch: saved?.queueSearch || "",
     logFilter: saved?.logFilter || "All",
@@ -343,7 +330,10 @@ function loadState() {
       ...defaultSettings,
       ...(saved?.settings || {})
     },
-    lastSavedAt: saved?.lastSavedAt || Date.now()
+    lastSavedAt: saved?.lastSavedAt || Date.now(),
+    backendStatus: "loading",
+    runtimeError: "",
+    runtime: createEmptyRuntime()
   };
 }
 
@@ -352,7 +342,6 @@ function persistState() {
   localStorage.setItem(
     storageKey,
     JSON.stringify({
-      engineStatus: state.engineStatus,
       queueFilter: state.queueFilter,
       queueSearch: state.queueSearch,
       logFilter: state.logFilter,
@@ -371,6 +360,366 @@ function safeParse(value) {
   }
 }
 
+function createEmptyRuntime() {
+  return {
+    generatedAt: null,
+    jobs: [],
+    jobsCount: 0,
+    session: {
+      connected: false,
+      authenticated: false,
+      hasState: false,
+      cookieCount: 0,
+      originCount: 0
+    },
+    files: {
+      jobs: {
+        path: "app/data/jobs.json",
+        exists: false,
+        updatedAt: null,
+        size: 0
+      },
+      state: {
+        path: "state.json",
+        exists: false,
+        updatedAt: null,
+        size: 0
+      }
+    }
+  };
+}
+
+async function fetchRuntimeData() {
+  try {
+    const response = await fetch("/api/runtime", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    state.runtime = {
+      ...createEmptyRuntime(),
+      ...data,
+      session: {
+        ...createEmptyRuntime().session,
+        ...(data.session || {})
+      },
+      files: {
+        ...createEmptyRuntime().files,
+        ...(data.files || {})
+      }
+    };
+    state.backendStatus = "connected";
+    state.runtimeError = "";
+    render();
+  } catch (error) {
+    state.backendStatus = "disconnected";
+    state.runtimeError = error.message;
+    render();
+  }
+}
+
+function stringOrEmpty(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function parseDate(value) {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeStatus(value) {
+  const normalized = stringOrEmpty(value).toLowerCase();
+  if (!normalized) {
+    return "Discovered";
+  }
+  if (["queued", "pending"].includes(normalized)) {
+    return "Queued";
+  }
+  if (["applied", "submitted", "success"].includes(normalized)) {
+    return "Applied";
+  }
+  if (["failed", "error"].includes(normalized)) {
+    return "Failed";
+  }
+  if (["skipped", "ignored", "ignore"].includes(normalized)) {
+    return "Skipped";
+  }
+  if (["discovered", "scraped", "fetched"].includes(normalized)) {
+    return "Discovered";
+  }
+  return normalized
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getJobs() {
+  return (Array.isArray(state.runtime?.jobs) ? state.runtime.jobs : [])
+    .map((job, index) => normalizeJob(job, index))
+    .sort((left, right) => {
+      const leftValue = left.scrapedAt ? left.scrapedAt.getTime() : 0;
+      const rightValue = right.scrapedAt ? right.scrapedAt.getTime() : 0;
+      return rightValue - leftValue;
+    });
+}
+
+function normalizeJob(job, index) {
+  const scoreCandidate = Number(job.score ?? job.match_score ?? job.relevance_score);
+  const score = Number.isFinite(scoreCandidate) ? Math.round(scoreCandidate) : null;
+  const scrapedAt = parseDate(job.scraped_at || job.updated_at);
+  const postedDate = stringOrEmpty(job.posted_date);
+  const location = stringOrEmpty(job.location);
+  const experience = stringOrEmpty(job.experience);
+  const meta = [location, experience, postedDate].filter(Boolean).join(" | ");
+
+  return {
+    raw: job,
+    id: String(job.job_id || job.id || index + 1),
+    title: stringOrEmpty(job.title) || "Untitled role",
+    company: stringOrEmpty(job.company || job.companyName) || "Unknown company",
+    location,
+    experience,
+    meta: meta || "Location and experience unavailable",
+    score,
+    scoreLabel: score === null ? "--" : String(score),
+    status: normalizeStatus(job.status || job.pipeline_status || job.apply_status),
+    skills: Array.isArray(job.skills) ? job.skills.filter(Boolean) : [],
+    scrapedAt,
+    time: scrapedAt ? formatRelativeTime(scrapedAt) : (postedDate || "Unknown"),
+    scrapedStamp: scrapedAt ? scrapedAt.toISOString() : "",
+    postedDate,
+    jobUrl: stringOrEmpty(job.job_url)
+  };
+}
+
+function formatRelativeTime(value) {
+  const date = value instanceof Date ? value : parseDate(value);
+  if (!date) {
+    return "Unknown";
+  }
+
+  const diffMs = Date.now() - date.getTime();
+  const diffMinutes = Math.round(diffMs / 60000);
+  if (diffMinutes < 1) {
+    return "just now";
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
+function getStatusCounts(jobs) {
+  return jobs.reduce((counts, job) => {
+    counts[job.status] = (counts[job.status] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+function getStatusFilters(jobs) {
+  const priority = ["Queued", "Discovered", "Applied", "Failed", "Skipped"];
+  const statuses = [...new Set(jobs.map((job) => job.status))];
+  return statuses.sort((left, right) => {
+    const leftIndex = priority.indexOf(left);
+    const rightIndex = priority.indexOf(right);
+    if (leftIndex === -1 && rightIndex === -1) {
+      return left.localeCompare(right);
+    }
+    if (leftIndex === -1) {
+      return 1;
+    }
+    if (rightIndex === -1) {
+      return -1;
+    }
+    return leftIndex - rightIndex;
+  });
+}
+
+function getFilteredJobs(jobs = getJobs()) {
+  const search = state.queueSearch.trim().toLowerCase();
+  return jobs.filter((job) => {
+    const matchesFilter = state.queueFilter === "All" || job.status === state.queueFilter;
+    if (!matchesFilter) {
+      return false;
+    }
+    if (!search) {
+      return true;
+    }
+    return [job.title, job.company, job.meta, `#${job.id}`]
+      .join(" ")
+      .toLowerCase()
+      .includes(search);
+  });
+}
+
+function buildDashboardMetrics(jobs) {
+  const uniqueCompanies = new Set(jobs.map((job) => job.company).filter(Boolean));
+  const uniqueLocations = new Set(jobs.map((job) => job.location).filter(Boolean));
+  const sessionConnected = Boolean(state.runtime?.session?.authenticated || state.runtime?.session?.connected);
+
+  return [
+    {
+      title: "Jobs Discovered",
+      value: String(jobs.length),
+      meta: state.runtime?.files?.jobs?.exists ? "live jobs file" : "jobs file missing",
+      icon: "stack",
+      tone: jobs.length ? "is-success" : ""
+    },
+    {
+      title: "Companies",
+      value: String(uniqueCompanies.size),
+      meta: "unique employers",
+      icon: "growth",
+      tone: ""
+    },
+    {
+      title: "Locations",
+      value: String(uniqueLocations.size),
+      meta: "active markets",
+      icon: "pulse",
+      tone: "is-warning"
+    },
+    {
+      title: "Naukri Session",
+      value: sessionConnected ? "Connected" : "Disconnected",
+      meta: `${state.runtime?.session?.cookieCount || 0} cookies`,
+      icon: sessionConnected ? "check" : "x",
+      tone: sessionConnected ? "is-success" : "is-danger"
+    }
+  ];
+}
+
+function buildActivityItems(jobs) {
+  const items = [];
+  const sessionConnected = Boolean(state.runtime?.session?.authenticated || state.runtime?.session?.connected);
+
+  items.push({
+    status: state.backendStatus === "connected" ? "success" : "danger",
+    title: state.backendStatus === "connected" ? "Runtime endpoint reachable" : "Runtime endpoint unavailable",
+    meta: state.runtimeError || "Frontend is synced with the local backend payload.",
+    time: state.runtime?.generatedAt ? formatRelativeTime(state.runtime.generatedAt) : "now"
+  });
+
+  items.push({
+    status: sessionConnected ? "success" : "danger",
+    title: sessionConnected ? "Naukri session is authenticated" : "Naukri session is not authenticated",
+    meta: sessionConnected
+      ? `${state.runtime?.session?.cookieCount || 0} auth cookies available`
+      : "Login again to restore the saved session.",
+    time: state.runtime?.files?.state?.updatedAt ? formatRelativeTime(state.runtime.files.state.updatedAt) : "now"
+  });
+
+  if (state.runtime?.files?.jobs?.exists) {
+    items.push({
+      status: "neutral",
+      title: "Jobs file detected",
+      meta: `${jobs.length} jobs loaded from ${state.runtime.files.jobs.path}`,
+      time: state.runtime.files.jobs.updatedAt ? formatRelativeTime(state.runtime.files.jobs.updatedAt) : "now"
+    });
+  }
+
+  jobs.slice(0, 5).forEach((job) => {
+    items.push({
+      status: "success",
+      title: `Discovered ${job.title}`,
+      meta: `${job.company} | ${job.meta}`,
+      time: job.time
+    });
+  });
+
+  return items.slice(0, 8);
+}
+
+function buildSummaryItems(jobs) {
+  const counts = getStatusCounts(jobs);
+  const total = jobs.length || 1;
+  const entries = getStatusFilters(jobs).map((status) => ({
+    label: status,
+    value: counts[status] || 0,
+    total,
+    tone: status === "Applied" ? "success" : status === "Failed" ? "danger" : "neutral"
+  }));
+
+  return entries.length
+    ? entries
+    : [{ label: "Discovered", value: 0, total: 1, tone: "neutral" }];
+}
+
+function buildRuntimeLogs() {
+  const jobs = getJobs();
+  const logs = [];
+  const sessionConnected = Boolean(state.runtime?.session?.authenticated || state.runtime?.session?.connected);
+
+  logs.push({
+    time: state.runtime?.generatedAt ? formatTimeForLog(new Date(state.runtime.generatedAt)) : "--:--:--",
+    level: state.backendStatus === "connected" ? "success" : "error",
+    text: state.backendStatus === "connected"
+      ? "Runtime payload loaded from /api/runtime"
+      : `Runtime payload unavailable: ${state.runtimeError || "unknown error"}`
+  });
+
+  logs.push({
+    time: state.runtime?.files?.jobs?.updatedAt ? formatTimeForLog(new Date(state.runtime.files.jobs.updatedAt)) : "--:--:--",
+    level: state.runtime?.files?.jobs?.exists ? "success" : "warning",
+    text: state.runtime?.files?.jobs?.exists
+      ? `Loaded ${jobs.length} jobs from ${state.runtime.files.jobs.path}`
+      : "app/data/jobs.json is missing or empty"
+  });
+
+  logs.push({
+    time: state.runtime?.files?.state?.updatedAt ? formatTimeForLog(new Date(state.runtime.files.state.updatedAt)) : "--:--:--",
+    level: sessionConnected ? "success" : "warning",
+    text: sessionConnected
+      ? `Authenticated Naukri session detected (${state.runtime?.session?.cookieCount || 0} cookies)`
+      : "No authenticated Naukri session found"
+  });
+
+  jobs.slice(0, 12).forEach((job) => {
+    logs.push({
+      time: job.scrapedAt ? formatTimeForLog(job.scrapedAt) : "--:--:--",
+      level: "info",
+      text: `Discovered ${job.title} @ ${job.company}`
+    });
+  });
+
+  return logs;
+}
+
+function getLogCounts(logs = buildRuntimeLogs()) {
+  return logs.reduce(
+    (counts, entry) => {
+      counts[entry.level] = (counts[entry.level] || 0) + 1;
+      return counts;
+    },
+    { info: 0, success: 0, warning: 0, error: 0 }
+  );
+}
+
+function getFilteredLogs(logs = buildRuntimeLogs()) {
+  const filter = state.logFilter.toLowerCase();
+  const search = state.logSearch.trim().toLowerCase();
+  return logs.filter((entry) => {
+    const matchesFilter = filter === "all" || entry.level === filter;
+    if (!matchesFilter) {
+      return false;
+    }
+    if (!search) {
+      return true;
+    }
+    return `${entry.time} ${entry.level} ${entry.text}`.toLowerCase().includes(search);
+  });
+}
+
 function getRouteFromHash() {
   const route = window.location.hash.replace("#", "").trim();
   return ["dashboard", "queue", "logs", "settings"].includes(route) ? route : "dashboard";
@@ -378,10 +727,12 @@ function getRouteFromHash() {
 
 function setRoute(route) {
   if (state.route === route) {
+    fetchRuntimeData();
     render();
     return;
   }
   state.route = route;
+  fetchRuntimeData();
   window.location.hash = route;
 }
 
@@ -408,11 +759,38 @@ function render() {
 }
 
 function updateTopbar() {
-  const running = state.engineStatus === "running";
-  statusPill.classList.toggle("is-running", running);
-  statusLabel.textContent = running ? "Running" : "Stopped";
-  startButton.classList.toggle("is-disabled", running);
-  stopButton.classList.toggle("is-disabled", !running);
+  const sessionConnected = Boolean(state.runtime?.session?.authenticated || state.runtime?.session?.connected);
+  const backendConnected = state.backendStatus === "connected";
+  const statusText = sessionConnected ? "Connected" : backendConnected ? "Disconnected" : "Offline";
+  const startLabel = startButton.querySelector("span:last-child");
+  const stopLabel = stopButton.querySelector("span:last-child");
+  const startIcon = startButton.querySelector(".action-icon");
+  const stopIcon = stopButton.querySelector(".action-icon");
+  const platformStats = document.querySelectorAll(".platform-stats span");
+
+  statusPill.classList.toggle("is-running", sessionConnected);
+  statusLabel.textContent = statusText;
+  startButton.classList.remove("is-disabled");
+  stopButton.classList.remove("is-disabled");
+
+  if (startLabel) {
+    startLabel.textContent = "Refresh";
+  }
+  if (stopLabel) {
+    stopLabel.textContent = "Open Queue";
+  }
+  if (startIcon) {
+    startIcon.innerHTML = iconMap.refresh;
+  }
+  if (stopIcon) {
+    stopIcon.innerHTML = iconMap.queue;
+  }
+  if (platformStats[0]) {
+    platformStats[0].textContent = `${state.runtime?.jobsCount || 0} jobs`;
+  }
+  if (platformStats[1]) {
+    platformStats[1].textContent = statusText;
+  }
 }
 
 function updateClock() {
@@ -431,16 +809,12 @@ function updateNav() {
 }
 
 function renderDashboard() {
-  const systemCard = {
-    key: "system",
-    title: "System",
-    value: state.engineStatus === "running" ? "Active" : "Idle",
-    meta: state.engineStatus,
-    icon: "pulse",
-    tone: "is-neutral"
-  };
+  const jobs = getJobs();
+  const metrics = buildDashboardMetrics(jobs);
+  const activityItems = buildActivityItems(jobs);
+  const summaryItems = buildSummaryItems(jobs);
 
-  const stats = [...dashboardMetrics, systemCard]
+  const stats = metrics
     .map((metric) => {
       const iconClass = metric.tone ? `card-icon ${metric.tone}` : "card-icon";
       return `
@@ -473,9 +847,9 @@ function renderDashboard() {
     })
     .join("");
 
-  const summary = dashboardSummary
+  const summary = summaryItems
     .map((item) => {
-      const width = Math.round((item.value / item.total) * 100);
+      const width = item.total ? Math.round((item.value / item.total) * 100) : 0;
       return `
         <div class="summary-row">
           <div class="summary-head">
@@ -511,18 +885,27 @@ function renderDashboard() {
           <div class="panel-head">
             <div>
               <h2 class="panel-title">Recent Activity</h2>
-              <p class="panel-subtitle">Last 30 minutes · live</p>
+              <p class="panel-subtitle">Live runtime signals and latest discovered jobs</p>
             </div>
             <span class="panel-meta">${activityItems.length} events</span>
           </div>
-          <div class="activity-list">${activity}</div>
+          <div class="activity-list">${activity || `
+            <div class="activity-row">
+              <span class="status-icon is-neutral">${iconMap.skipped}</span>
+              <div>
+                <p class="activity-title">No runtime activity yet</p>
+                <p class="activity-meta">Once jobs are discovered, recent events will appear here.</p>
+              </div>
+              <span class="activity-time">now</span>
+            </div>
+          `}</div>
         </article>
 
         <article class="panel-card">
           <div class="panel-head">
             <div>
-              <h2 class="panel-title">Today's Summary</h2>
-              <p class="panel-subtitle">Apply / Skip / Fail breakdown</p>
+              <h2 class="panel-title">Queue Summary</h2>
+              <p class="panel-subtitle">Breakdown from the current real job queue</p>
             </div>
           </div>
           <div class="summary-list">${summary}</div>
@@ -537,13 +920,19 @@ function renderDashboard() {
 }
 
 function renderQueue() {
-  const counts = getQueueCounts();
-  const filters = ["All", "Queued", "Applied", "Failed", "Skipped"];
-  const filtered = getFilteredJobs();
+  const jobs = getJobs();
+  const counts = getStatusCounts(jobs);
+  const filters = ["All", ...getStatusFilters(jobs)];
+
+  if (!filters.includes(state.queueFilter)) {
+    state.queueFilter = "All";
+  }
+
+  const filtered = getFilteredJobs(jobs);
 
   const controls = filters
     .map((filter) => {
-      const count = filter === "All" ? queueJobs.length : counts[filter] || 0;
+      const count = filter === "All" ? jobs.length : counts[filter] || 0;
       return `
         <button class="segment ${state.queueFilter === filter ? "is-active" : ""}" type="button" data-queue-filter="${filter}">
           ${filter} ${count}
@@ -558,17 +947,23 @@ function renderQueue() {
         <tr>
           <td><span class="job-id">#${job.id}</span></td>
           <td>
-            <p class="job-title">${escapeHtml(job.title)}</p>
+            <p class="job-title">${job.jobUrl ? `<a href="${escapeAttribute(job.jobUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.title)}</a>` : escapeHtml(job.title)}</p>
             <p class="job-meta">${escapeHtml(job.meta)}</p>
           </td>
           <td><span class="company-name">${escapeHtml(job.company)}</span></td>
-          <td><span class="score-pill">${job.score}</span></td>
+          <td><span class="score-pill ${job.score === null ? "is-empty" : ""}">${job.scoreLabel}</span></td>
           <td>${renderStatusBadge(job.status)}</td>
           <td><span class="timestamp">${escapeHtml(job.time)}</span></td>
         </tr>
       `;
     })
-    .join("");
+    .join("") || `
+      <tr>
+        <td colspan="6" style="padding: 28px 24px; text-align: center; color: #6f7b94;">
+          No real jobs found yet. Run discovery so the queue can populate from backend data.
+        </td>
+      </tr>
+    `;
 
   return `
     <section class="page-shell">
@@ -576,7 +971,7 @@ function renderQueue() {
         <div>
           <p class="eyebrow">Pipeline</p>
           <h1 class="page-title">Job Queue</h1>
-          <p class="page-subtitle">Jobs fetched by the engine with scoring and decisions.</p>
+          <p class="page-subtitle">Jobs loaded from the current runtime payload, without any sample rows.</p>
         </div>
       </header>
 
@@ -615,13 +1010,15 @@ function renderQueue() {
 }
 
 function renderLogs() {
-  const counts = getLogCounts();
+  const logs = buildRuntimeLogs();
+  const logEntries = logs;
+  const counts = getLogCounts(logs);
   const filters = ["All", "Info", "Success", "Warning", "Error"];
-  const filtered = getFilteredLogs();
+  const filtered = getFilteredLogs(logs);
 
   const controls = filters
     .map((filter) => {
-      const count = filter === "All" ? logEntries.length : counts[filter.toLowerCase()] || 0;
+      const count = filter === "All" ? logs.length : counts[filter.toLowerCase()] || 0;
       return `
         <button class="segment ${state.logFilter === filter ? "is-active" : ""}" type="button" data-log-filter="${filter}">
           ${filter} ${count}
@@ -643,7 +1040,16 @@ function renderLogs() {
         </div>
       `;
     })
-    .join("");
+    .join("") || `
+      <div class="log-line">
+        <span class="log-index">001</span>
+        <span class="log-time">--:--:--</span>
+        <div class="log-text">
+          <span class="level-tag is-warning">WARNING</span>
+          <span>No real runtime events are available yet.</span>
+        </div>
+      </div>
+    `;
 
   return `
     <section class="page-shell">
@@ -651,7 +1057,7 @@ function renderLogs() {
         <div>
           <p class="eyebrow">Diagnostics</p>
           <h1 class="page-title">Logs</h1>
-          <p class="page-subtitle">Engine output · newest first · ${logEntries.length} lines</p>
+          <p class="page-subtitle">Runtime-derived diagnostics | newest first | ${logEntries.length} lines</p>
         </div>
       </header>
 
@@ -682,7 +1088,7 @@ function renderLogs() {
               <span></span>
               <span></span>
             </div>
-            <span>jarvis-engine · live</span>
+            <span>jarvis-engine | live</span>
           </div>
           <span class="terminal-stream">streaming</span>
         </div>
@@ -694,6 +1100,11 @@ function renderLogs() {
 
 function renderSettings() {
   const settings = state.settings;
+  const runtime = state.runtime || createEmptyRuntime();
+  const backendConnected = state.backendStatus === "connected";
+  const naukriConnected = Boolean(runtime.session?.connected || runtime.session?.authenticated);
+  const backendLabel = state.backendStatus === "loading" ? "Checking" : backendConnected ? "Connected" : "Disconnected";
+  const naukriLabel = naukriConnected ? "Connected" : "Disconnected";
 
   return `
     <section class="page-shell">
@@ -706,6 +1117,51 @@ function renderSettings() {
       </header>
 
       <section class="settings-layout">
+        <div class="settings-grid">
+          <article class="settings-card">
+            <h2 class="settings-title">Backend Connection</h2>
+            <p class="settings-subtitle">Live runtime state from the local server.</p>
+            <div class="connection-stack">
+              <div class="connection-row">
+                <span class="connection-label">Frontend -> Backend</span>
+                ${renderConnectionBadge(backendLabel)}
+              </div>
+              <div class="connection-meta">
+                <span>Last sync</span>
+                <strong>${runtime.generatedAt ? formatRuntimeTimestamp(runtime.generatedAt) : "Waiting for first sync"}</strong>
+              </div>
+              <div class="connection-meta">
+                <span>Jobs file</span>
+                <strong>${runtime.files?.jobs?.exists ? `${runtime.jobsCount} loaded` : "Missing"}</strong>
+              </div>
+              ${state.runtimeError ? `<p class="connection-hint">Runtime endpoint error: ${escapeHtml(state.runtimeError)}</p>` : ""}
+            </div>
+          </article>
+
+          <article class="settings-card">
+            <h2 class="settings-title">Naukri Session</h2>
+            <p class="settings-subtitle">Derived from the saved browser session and auth cookies.</p>
+            <div class="connection-stack">
+              <div class="connection-row">
+                <span class="connection-label">Naukri</span>
+                ${renderConnectionBadge(naukriLabel)}
+              </div>
+              <div class="connection-meta">
+                <span>Authenticated cookies</span>
+                <strong>${runtime.session?.cookieCount || 0}</strong>
+              </div>
+              <div class="connection-meta">
+                <span>Storage state</span>
+                <strong>${runtime.session?.hasState ? "Available" : "Missing"}</strong>
+              </div>
+              <div class="connection-meta">
+                <span>Origin snapshots</span>
+                <strong>${runtime.session?.originCount || 0}</strong>
+              </div>
+            </div>
+          </article>
+        </div>
+
         <article class="settings-card">
           <h2 class="settings-title">Target Keywords</h2>
           <p class="settings-subtitle">Used by the Naukri scraper to filter jobs.</p>
@@ -1004,68 +1460,24 @@ function updateSaveTimestamp() {
   }
 }
 
-function getQueueCounts() {
-  return queueJobs.reduce(
-    (counts, job) => {
-      counts[job.status] = (counts[job.status] || 0) + 1;
-      return counts;
-    },
-    {}
-  );
-}
-
-function getFilteredJobs() {
-  const search = state.queueSearch.trim().toLowerCase();
-  return queueJobs.filter((job) => {
-    const matchesFilter = state.queueFilter === "All" || job.status === state.queueFilter;
-    if (!matchesFilter) {
-      return false;
-    }
-    if (!search) {
-      return true;
-    }
-    return [job.title, job.company, job.meta, `#${job.id}`]
-      .join(" ")
-      .toLowerCase()
-      .includes(search);
-  });
-}
-
-function getLogCounts() {
-  return logEntries.reduce(
-    (counts, entry) => {
-      counts[entry.level] = (counts[entry.level] || 0) + 1;
-      return counts;
-    },
-    { info: 0, success: 0, warning: 0, error: 0 }
-  );
-}
-
-function getFilteredLogs() {
-  const filter = state.logFilter.toLowerCase();
-  const search = state.logSearch.trim().toLowerCase();
-  return logEntries.filter((entry) => {
-    const matchesFilter = filter === "all" || entry.level === filter;
-    if (!matchesFilter) {
-      return false;
-    }
-    if (!search) {
-      return true;
-    }
-    return `${entry.time} ${entry.level} ${entry.text}`.toLowerCase().includes(search);
-  });
-}
-
-function prependLog(entry) {
-  logEntries.unshift(entry);
-  if (logEntries.length > 60) {
-    logEntries.pop();
-  }
-}
-
 function renderStatusBadge(status) {
   const tone = status.toLowerCase();
-  const icon = tone === "applied" ? "check" : tone === "failed" ? "x" : tone === "queued" ? "queued" : "skipped";
+  const icon = tone === "applied"
+    ? "check"
+    : tone === "failed"
+      ? "x"
+      : tone === "queued"
+        ? "queued"
+        : tone === "discovered"
+          ? "stack"
+          : "skipped";
+  return `<span class="badge is-${tone}">${iconMap[icon]}${escapeHtml(status)}</span>`;
+}
+
+function renderConnectionBadge(status) {
+  const normalized = status.toLowerCase();
+  const tone = normalized === "connected" ? "applied" : normalized === "checking" ? "queued" : "failed";
+  const icon = tone === "applied" ? "check" : tone === "queued" ? "queued" : "x";
   return `<span class="badge is-${tone}">${iconMap[icon]}${escapeHtml(status)}</span>`;
 }
 
@@ -1129,6 +1541,20 @@ function formatRelativeSave(timestamp) {
   }
   const hours = Math.round(minutes / 60);
   return `${hours}h ago`;
+}
+
+function formatRuntimeTimestamp(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Unknown";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function escapeHtml(value) {
