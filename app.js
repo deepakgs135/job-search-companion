@@ -251,7 +251,7 @@ const logEntries = [
 
 const defaultSettings = {
   keywords: ["react", "node.js", "typescript", "python"],
-  location: "Bengaluru, Remote",
+  location: "Bangalore, Chennai, Hyderabad",
   dailyLimit: 50,
   threshold: 65,
   autoApply: true,
@@ -261,8 +261,12 @@ const defaultSettings = {
 };
 
 const storageKey = "jarvis-control-panel-state";
+const backendOrigin = window.location.protocol === "file:"
+  ? "http://127.0.0.1:5000"
+  : window.location.origin;
 
 const state = loadState();
+let runtimeRequest = null;
 
 const pageRoot = document.getElementById("pageRoot");
 const sidebar = document.getElementById("sidebar");
@@ -294,7 +298,7 @@ menuButton.addEventListener("click", () => {
 backdrop.addEventListener("click", closeSidebar);
 
 startButton.addEventListener("click", () => {
-  fetchRuntimeData();
+  startDiscovery();
 });
 
 stopButton.addEventListener("click", () => {
@@ -315,6 +319,9 @@ window.addEventListener("resize", () => {
 
 updateClock();
 setInterval(updateClock, 1000);
+setInterval(() => {
+  fetchRuntimeData();
+}, 4000);
 fetchRuntimeData();
 render();
 
@@ -365,6 +372,23 @@ function createEmptyRuntime() {
     generatedAt: null,
     jobs: [],
     jobsCount: 0,
+    discovery: {
+      running: false,
+      startedAt: null,
+      finishedAt: null,
+      lastResult: null,
+      lastError: "",
+      locations: [],
+      progress: {
+        currentLocation: null,
+        currentPage: 0,
+        jobsFound: 0,
+        jobsSaved: 0,
+        lastMessage: "",
+        updatedAt: null
+      }
+    },
+    logs: [],
     session: {
       connected: false,
       authenticated: false,
@@ -389,31 +413,102 @@ function createEmptyRuntime() {
   };
 }
 
+function buildApiUrl(path) {
+  return `${backendOrigin}${path}`;
+}
+
 async function fetchRuntimeData() {
+  if (runtimeRequest) {
+    return runtimeRequest;
+  }
+
+  runtimeRequest = (async () => {
+    try {
+      const response = await fetch(buildApiUrl("/api/runtime"), {
+        cache: "no-store",
+        mode: "cors"
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      state.runtime = {
+        ...createEmptyRuntime(),
+        ...data,
+        discovery: {
+          ...createEmptyRuntime().discovery,
+          ...(data.discovery || {}),
+          progress: {
+            ...createEmptyRuntime().discovery.progress,
+            ...((data.discovery || {}).progress || {})
+          }
+        },
+        session: {
+          ...createEmptyRuntime().session,
+          ...(data.session || {})
+        },
+        files: {
+          ...createEmptyRuntime().files,
+          ...(data.files || {})
+        },
+        logs: Array.isArray(data.logs) ? data.logs : []
+      };
+      state.backendStatus = "connected";
+      state.runtimeError = "";
+      render();
+    } catch (error) {
+      state.backendStatus = "disconnected";
+      state.runtimeError = window.location.protocol === "file:"
+        ? `Unable to reach Flask backend at ${backendOrigin}. Start it with "python main.py" and keep it running.`
+        : error.message;
+      render();
+    }
+  })();
+
   try {
-    const response = await fetch("/api/runtime", { cache: "no-store" });
+    await runtimeRequest;
+  } finally {
+    runtimeRequest = null;
+  }
+}
+
+function parseConfiguredLocations() {
+  return stringOrEmpty(state.settings.location)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function isDiscoveryRunning() {
+  return Boolean(state.runtime?.discovery?.running);
+}
+
+async function startDiscovery() {
+  if (isDiscoveryRunning()) {
+    setRoute("queue");
+    return;
+  }
+
+  try {
+    const response = await fetch(buildApiUrl("/api/discovery/start"), {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        locations: parseConfiguredLocations()
+      })
+    });
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const data = await response.json();
-    state.runtime = {
-      ...createEmptyRuntime(),
-      ...data,
-      session: {
-        ...createEmptyRuntime().session,
-        ...(data.session || {})
-      },
-      files: {
-        ...createEmptyRuntime().files,
-        ...(data.files || {})
-      }
-    };
-    state.backendStatus = "connected";
-    state.runtimeError = "";
-    render();
+    await fetchRuntimeData();
+    setRoute("queue");
   } catch (error) {
-    state.backendStatus = "disconnected";
     state.runtimeError = error.message;
     render();
   }
@@ -602,6 +697,8 @@ function buildDashboardMetrics(jobs) {
 function buildActivityItems(jobs) {
   const items = [];
   const sessionConnected = Boolean(state.runtime?.session?.authenticated || state.runtime?.session?.connected);
+  const discovery = state.runtime?.discovery || createEmptyRuntime().discovery;
+  const progress = discovery.progress || createEmptyRuntime().discovery.progress;
 
   items.push({
     status: state.backendStatus === "connected" ? "success" : "danger",
@@ -618,6 +715,41 @@ function buildActivityItems(jobs) {
       : "Login again to restore the saved session.",
     time: state.runtime?.files?.state?.updatedAt ? formatRelativeTime(state.runtime.files.state.updatedAt) : "now"
   });
+
+  if (discovery.running) {
+    items.push({
+      status: "neutral",
+      title: "Discovery run in progress",
+      meta: progress.lastMessage
+        || (
+          discovery.locations?.length
+            ? `Collecting jobs for ${discovery.locations.join(", ")}`
+            : "Collecting jobs from configured locations."
+        ),
+      time: progress.updatedAt
+        ? formatRelativeTime(progress.updatedAt)
+        : (discovery.startedAt ? formatRelativeTime(discovery.startedAt) : "now")
+    });
+    items.push({
+      status: "success",
+      title: `${progress.jobsSaved || 0} jobs saved live to queue`,
+      meta: progress.currentLocation
+        ? `${progress.currentLocation} | page ${progress.currentPage || 0} | ${progress.jobsFound || 0} discovered`
+        : `${progress.jobsFound || 0} discovered so far`,
+      time: progress.updatedAt
+        ? formatRelativeTime(progress.updatedAt)
+        : "now"
+    });
+  } else if (discovery.lastResult || discovery.lastError) {
+    items.push({
+      status: discovery.lastError ? "danger" : "success",
+      title: discovery.lastError ? "Last discovery run failed" : "Last discovery run completed",
+      meta: discovery.lastError
+        ? discovery.lastError
+        : `${discovery.lastResult?.total_jobs_saved || 0} jobs saved from ${discovery.lastResult?.total_jobs_found || 0} discovered`,
+      time: discovery.finishedAt ? formatRelativeTime(discovery.finishedAt) : "now"
+    });
+  }
 
   if (state.runtime?.files?.jobs?.exists) {
     items.push({
@@ -656,6 +788,15 @@ function buildSummaryItems(jobs) {
 }
 
 function buildRuntimeLogs() {
+  const runtimeLogs = Array.isArray(state.runtime?.logs) ? state.runtime.logs : [];
+  if (runtimeLogs.length) {
+    return runtimeLogs.map((entry) => ({
+      time: entry.time ? formatTimeForLog(new Date(entry.time)) : "--:--:--",
+      level: stringOrEmpty(entry.level).toLowerCase() || "info",
+      text: stringOrEmpty(entry.text) || "Runtime event"
+    }));
+  }
+
   const jobs = getJobs();
   const logs = [];
   const sessionConnected = Boolean(state.runtime?.session?.authenticated || state.runtime?.session?.connected);
@@ -761,26 +902,36 @@ function render() {
 function updateTopbar() {
   const sessionConnected = Boolean(state.runtime?.session?.authenticated || state.runtime?.session?.connected);
   const backendConnected = state.backendStatus === "connected";
-  const statusText = sessionConnected ? "Connected" : backendConnected ? "Disconnected" : "Offline";
+  const discoveryRunning = Boolean(state.runtime?.discovery?.running);
+  const progress = state.runtime?.discovery?.progress || createEmptyRuntime().discovery.progress;
+  const statusText = !backendConnected
+    ? "Offline"
+    : discoveryRunning
+      ? "Running"
+      : sessionConnected
+        ? "Ready"
+        : "Disconnected";
   const startLabel = startButton.querySelector("span:last-child");
   const stopLabel = stopButton.querySelector("span:last-child");
   const startIcon = startButton.querySelector(".action-icon");
   const stopIcon = stopButton.querySelector(".action-icon");
   const platformStats = document.querySelectorAll(".platform-stats span");
 
-  statusPill.classList.toggle("is-running", sessionConnected);
+  statusPill.classList.toggle("is-running", discoveryRunning || sessionConnected);
   statusLabel.textContent = statusText;
-  startButton.classList.remove("is-disabled");
+  startButton.classList.toggle("is-disabled", discoveryRunning || !backendConnected);
   stopButton.classList.remove("is-disabled");
+  startButton.disabled = discoveryRunning || !backendConnected;
+  stopButton.disabled = false;
 
   if (startLabel) {
-    startLabel.textContent = "Refresh";
+    startLabel.textContent = discoveryRunning ? "Discovery Running" : "Start Discovery";
   }
   if (stopLabel) {
     stopLabel.textContent = "Open Queue";
   }
   if (startIcon) {
-    startIcon.innerHTML = iconMap.refresh;
+    startIcon.innerHTML = discoveryRunning ? iconMap.queued : iconMap.refresh;
   }
   if (stopIcon) {
     stopIcon.innerHTML = iconMap.queue;
@@ -789,7 +940,9 @@ function updateTopbar() {
     platformStats[0].textContent = `${state.runtime?.jobsCount || 0} jobs`;
   }
   if (platformStats[1]) {
-    platformStats[1].textContent = statusText;
+    platformStats[1].textContent = discoveryRunning
+      ? `${progress.jobsSaved || 0} saved`
+      : statusText;
   }
 }
 
@@ -1101,10 +1254,18 @@ function renderLogs() {
 function renderSettings() {
   const settings = state.settings;
   const runtime = state.runtime || createEmptyRuntime();
+  const discovery = runtime.discovery || createEmptyRuntime().discovery;
   const backendConnected = state.backendStatus === "connected";
   const naukriConnected = Boolean(runtime.session?.connected || runtime.session?.authenticated);
   const backendLabel = state.backendStatus === "loading" ? "Checking" : backendConnected ? "Connected" : "Disconnected";
   const naukriLabel = naukriConnected ? "Connected" : "Disconnected";
+  const discoveryLabel = discovery.running
+    ? "Running"
+    : discovery.lastError
+      ? "Failed"
+      : discovery.lastResult
+        ? "Completed"
+        : "Idle";
 
   return `
     <section class="page-shell">
@@ -1133,6 +1294,14 @@ function renderSettings() {
               <div class="connection-meta">
                 <span>Jobs file</span>
                 <strong>${runtime.files?.jobs?.exists ? `${runtime.jobsCount} loaded` : "Missing"}</strong>
+              </div>
+              <div class="connection-meta">
+                <span>Discovery</span>
+                <strong>${discoveryLabel}</strong>
+              </div>
+              <div class="connection-meta">
+                <span>Locations</span>
+                <strong>${discovery.locations?.length ? escapeHtml(discovery.locations.join(", ")) : "Default scope"}</strong>
               </div>
               ${state.runtimeError ? `<p class="connection-hint">Runtime endpoint error: ${escapeHtml(state.runtimeError)}</p>` : ""}
             </div>
@@ -1163,8 +1332,8 @@ function renderSettings() {
         </div>
 
         <article class="settings-card">
-          <h2 class="settings-title">Target Keywords</h2>
-          <p class="settings-subtitle">Used by the Naukri scraper to filter jobs.</p>
+          <h2 class="settings-title">Scoring Keywords</h2>
+          <p class="settings-subtitle">Stored locally for future AI scoring. Discovery itself does not filter by keyword.</p>
           <div class="field-row">
             <input
               class="field-input"
@@ -1185,7 +1354,7 @@ function renderSettings() {
         <div class="settings-grid">
           <article class="settings-card">
             <h2 class="settings-title">Location</h2>
-            <p class="settings-subtitle">Comma-separated locations or 'Remote'.</p>
+            <p class="settings-subtitle">Comma-separated locations used for broad Naukri discovery.</p>
             <div class="field-stack">
               <input
                 class="field-input"

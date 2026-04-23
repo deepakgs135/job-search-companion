@@ -1,281 +1,282 @@
-import os
-import time
-import random
-import logging
-from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
+from __future__ import annotations
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import logging
+import os
+import random
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+from dotenv import load_dotenv
+from playwright.sync_api import Locator, Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
+
+
+LOGGER = logging.getLogger(__name__)
+ROOT_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_STATE_PATH = ROOT_DIR / "state.json"
+DEFAULT_SCREENSHOT_DIR = ROOT_DIR / "debug_artifacts" / "naukri" / "login"
+
+LOGIN_BUTTON_SELECTORS = (
+    'a[data-ga-track*="Login"]',
+    "a[href*='login']",
+    ".login-layer",
+    "button:has-text('Login')",
+)
+
+EMAIL_INPUT_SELECTORS = (
+    'input[placeholder*="Email"]',
+    "#usernameField",
+    'input[name="username"]',
+    'input[type="email"]',
+)
+
+PASSWORD_INPUT_SELECTORS = (
+    'input[placeholder*="password"]',
+    "#passwordField",
+    'input[name="password"]',
+    'input[type="password"]',
+)
+
+SUBMIT_BUTTON_SELECTORS = (
+    'button[type="submit"]',
+    "button:has-text('Login')",
+    'input[type="submit"]',
+)
+
+SUCCESS_SELECTORS = (
+    'a[data-ga-track*="Profile"]',
+    "text=/View profile/i",
+    "text=/Profile performance/i",
+    "text=/Recommended jobs/i",
+)
+
+POST_LOGIN_POPUP_SELECTORS = (
+    'button[aria-label="Close"]',
+    "button:has-text('Close')",
+    '[class*="close"]',
+    ".modal-close",
+    ".popup-close",
+)
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        )
+
+
+def parse_env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+@dataclass
+class NaukriLoginConfig:
+    state_path: Path = DEFAULT_STATE_PATH
+    screenshot_dir: Path = DEFAULT_SCREENSHOT_DIR
+    base_url: str = "https://www.naukri.com"
+    headless: bool = parse_env_bool("PLAYWRIGHT_HEADLESS", False)
+    navigation_timeout_ms: int = 45000
+
 
 class NaukriLogin:
-    def __init__(self):
+    def __init__(
+        self,
+        state_path: str | Path | None = None,
+        screenshot_dir: str | Path | None = None,
+        headless: bool | None = None,
+    ) -> None:
         load_dotenv()
-        self.email = os.getenv('NAUKRI_EMAIL')
-        self.password = os.getenv('NAUKRI_PASSWORD')
-        if not self.email or not self.password:
-            raise ValueError("NAUKRI_EMAIL and NAUKRI_PASSWORD must be set in .env file")
-        self.cookies_file = 'naukri_cookies.json'
+        self.email = os.getenv("NAUKRI_EMAIL")
+        self.password = os.getenv("NAUKRI_PASSWORD")
+        self.config = NaukriLoginConfig(
+            state_path=Path(state_path) if state_path else DEFAULT_STATE_PATH,
+            screenshot_dir=Path(screenshot_dir) if screenshot_dir else DEFAULT_SCREENSHOT_DIR,
+            headless=parse_env_bool("PLAYWRIGHT_HEADLESS", False) if headless is None else headless,
+        )
+        self.config.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config.screenshot_dir.mkdir(parents=True, exist_ok=True)
 
-    def human_delay(self, min_sec=1, max_sec=3):
-        delay = random.uniform(min_sec, max_sec)
-        time.sleep(delay)
+    def human_delay(self, min_seconds: float = 1.0, max_seconds: float = 3.0) -> None:
+        time.sleep(random.uniform(min_seconds, max_seconds))
 
-    def slow_type(self, element, text):
-        for char in text:
-            element.type(char)
-            time.sleep(random.uniform(0.1, 0.3))
+    def ensure_session(self) -> Path:
+        if self.is_session_valid():
+            LOGGER.info("Reusing authenticated Naukri session from %s", self.config.state_path)
+            return self.config.state_path
 
-    def save_cookies(self, context):
-        cookies = context.cookies()
-        with open(self.cookies_file, 'w') as f:
-            import json
-            json.dump(cookies, f)
-        logging.info("Cookies saved to file")
+        LOGGER.info("Existing Naukri session is missing or invalid. Starting login flow.")
+        self.login()
+        return self.config.state_path
 
-    def load_cookies(self, context):
-        if os.path.exists(self.cookies_file):
-            with open(self.cookies_file, 'r') as f:
-                import json
-                cookies = json.load(f)
-                context.add_cookies(cookies)
-            logging.info("Cookies loaded from file")
-            return True
-        return False
+    def is_session_valid(self) -> bool:
+        if not self.config.state_path.exists():
+            LOGGER.info("Session state file %s not found", self.config.state_path)
+            return False
 
-    def close_post_login_popup(self, page):
-        logging.info("Checking for post-login popup close button")
-        popup_selectors = [
-            'button[aria-label="Close"]',
-            'button:has-text("Close")',
-            'button:has-text("×")',
-            'button:has-text("x")',
-            'button[class*="close"]',
-            'div[class*="close"]',
-            '.modal-close',
-            '.popup-close',
-            '.close-btn',
-            '.dialog-close'
-        ]
-        for selector in popup_selectors:
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=self.config.headless)
+                context = browser.new_context(storage_state=str(self.config.state_path))
+                page = context.new_page()
+                self._goto_home(page)
+                self.human_delay(1.0, 2.0)
+                valid = self.is_login_successful(page)
+                browser.close()
+                return valid
+        except Exception as exc:
+            LOGGER.warning("Unable to validate saved Naukri session: %s", exc)
+            return False
+
+    def login(self) -> str:
+        self._require_credentials()
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=self.config.headless)
+            context = browser.new_context()
+            page = context.new_page()
+            page.set_default_timeout(self.config.navigation_timeout_ms)
+
             try:
-                close_button = page.locator(selector).first
-                if close_button.is_visible():
-                    logging.info(f"Closing popup using selector: {selector}")
-                    close_button.click()
-                    self.human_delay(0.5, 1.2)
-                    return True
-            except Exception:
-                continue
-        logging.info("No post-login popup close button found")
-        return False
+                self._goto_home(page)
+                self.human_delay(1.0, 2.5)
 
-    def is_login_successful(self, page):
-        success_selectors = [
-            'a[data-ga-track="Main Navigation Profile|Profile Icon"]',
-            'text=View profile',
-            'button:has-text("View profile")',
-            'text=Profile performance',
-            'div:has-text("Deepak")',
-        ]
-        for selector in success_selectors:
+                if self.is_login_successful(page):
+                    LOGGER.info("Session already authenticated after homepage load")
+                    self.save_storage_state(context)
+                    browser.close()
+                    return "Login Successful"
+
+                login_button = self.find_first_visible(page, LOGIN_BUTTON_SELECTORS, timeout_ms=7000)
+                if not login_button:
+                    raise RuntimeError("Could not locate Naukri login button")
+
+                login_button.click()
+                self.human_delay(1.0, 2.0)
+
+                email_input = self.find_first_visible(page, EMAIL_INPUT_SELECTORS, timeout_ms=10000)
+                password_input = self.find_first_visible(page, PASSWORD_INPUT_SELECTORS, timeout_ms=10000)
+                submit_button = self.find_first_visible(page, SUBMIT_BUTTON_SELECTORS, timeout_ms=10000)
+
+                if not email_input or not password_input or not submit_button:
+                    raise RuntimeError("Could not locate one or more login form controls")
+
+                self.slow_fill(email_input, self.email or "")
+                self.human_delay(0.5, 1.2)
+                self.slow_fill(password_input, self.password or "")
+                self.human_delay(0.8, 1.5)
+
+                submit_button.click()
+                self.human_delay(4.0, 6.0)
+                self.close_post_login_popup(page)
+
+                if not self.is_login_successful(page):
+                    raise RuntimeError("Login completed but no authenticated state was detected")
+
+                self.save_storage_state(context)
+                LOGGER.info("Naukri login succeeded. Session stored in %s", self.config.state_path)
+                browser.close()
+                return "Login Successful"
+            except Exception:
+                try:
+                    self.capture_screenshot(page, "login_failure")
+                except Exception as screenshot_error:
+                    LOGGER.warning("Failed to capture login failure screenshot: %s", screenshot_error)
+                browser.close()
+                raise
+
+    def save_storage_state(self, context) -> None:
+        context.storage_state(path=str(self.config.state_path))
+
+    def close_post_login_popup(self, page: Page) -> bool:
+        popup_button = self.find_first_visible(page, POST_LOGIN_POPUP_SELECTORS, timeout_ms=2500)
+        if not popup_button:
+            return False
+
+        try:
+            popup_button.click(timeout=3000)
+            self.human_delay(0.5, 1.0)
+            LOGGER.info("Closed post-login popup")
+            return True
+        except Exception as exc:
+            LOGGER.debug("Popup close attempt failed: %s", exc)
+            return False
+
+    def is_login_successful(self, page: Page) -> bool:
+        current_url = page.url.lower()
+        if "/mnuser/" in current_url or "/homepage" in current_url:
+            return True
+
+        for selector in SUCCESS_SELECTORS:
             try:
                 locator = page.locator(selector).first
                 if locator.is_visible():
-                    logging.info(f"Found login success indicator: {selector}")
                     return True
             except Exception:
                 continue
-        current_url = page.url
-        if '/mnuser/homepage' in current_url or '/homepage' in current_url:
-            logging.info(f"Detected logged-in homepage URL: {current_url}")
-            return True
+
+        for selector in LOGIN_BUTTON_SELECTORS:
+            try:
+                locator = page.locator(selector).first
+                if locator.is_visible():
+                    return False
+            except Exception:
+                continue
+
         return False
 
-    def login(self):
-        logging.info("Starting Naukri login process")
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)  # Non-headless for debugging
-            context = browser.new_context()
+    def slow_fill(self, locator: Locator, value: str) -> None:
+        locator.click()
+        locator.fill("")
+        for character in value:
+            locator.type(character, delay=random.randint(70, 160))
 
-            # Try to load existing session
-            if self.load_cookies(context):
-                page = context.new_page()
-                page.goto('https://www.naukri.com')
-                self.human_delay()
-                # Check if already logged in
-                if page.locator('a[data-ga-track="Main Navigation Profile|Profile Icon"]').is_visible():
-                    logging.info("Already logged in via saved session")
-                    browser.close()
-                    return "Login Successful"
-                else:
-                    logging.info("Saved session expired, proceeding with login")
+    def capture_screenshot(self, page: Page, prefix: str) -> Path:
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        screenshot_path = self.config.screenshot_dir / f"{prefix}-{timestamp}.png"
+        page.screenshot(path=str(screenshot_path), full_page=True)
+        LOGGER.info("Saved screenshot to %s", screenshot_path)
+        return screenshot_path
 
-            page = context.new_page()
-            logging.info("Navigating to https://www.naukri.com")
-            page.goto('https://www.naukri.com')
-            self.human_delay()
-
-            # Click login button
-            logging.info("Clicking login button")
-            # Try multiple possible selectors for login button
-            login_selectors = [
-                'a[data-ga-track="Main Navigation Login|Login Icon"]',
-                '.login-layer',
-                'a[href*="login"]',
-                'button:contains("Login")'
-            ]
-            login_button = None
-            for selector in login_selectors:
-                try:
-                    login_button = page.locator(selector).first
-                    if login_button.is_visible():
-                        break
-                except:
-                    continue
-            if not login_button:
-                logging.error("Login button not found")
-                page.screenshot(path='login_button_not_found.png')
-                browser.close()
-                return "Login Failed"
-            login_button.click()
-            page.wait_for_load_state('networkidle')
-            self.human_delay()
-            page.screenshot(path='after_login_click.png')
-            logging.info("Screenshot saved after login click")
-            # Debug: Log visible inputs
-            inputs = page.locator('input').all()
-            logging.info(f"Visible inputs: {len(inputs)}")
-            for i, inp in enumerate(inputs):
-                try:
-                    tag = inp.evaluate('el => el.outerHTML')
-                    logging.info(f"Input {i}: {tag}")
-                except:
-                    logging.info(f"Input {i}: could not get HTML")
-            # Check for iframes
-            iframes = page.locator('iframe').all()
-            logging.info(f"Visible iframes: {len(iframes)}")
-            for i, iframe in enumerate(iframes):
-                try:
-                    src = iframe.get_attribute('src')
-                    logging.info(f"Iframe {i}: src={src}")
-                except:
-                    logging.info(f"Iframe {i}: could not get src")
-            # Log buttons
-            buttons = page.locator('button').all()
-            logging.info(f"Visible buttons: {len(buttons)}")
-            for i, btn in enumerate(buttons):
-                try:
-                    text = btn.text_content()
-                    logging.info(f"Button {i}: {text}")
-                except:
-                    logging.info(f"Button {i}: could not get text")
-
-            # Fill email
-            logging.info("Waiting for email input field")
-            # Try multiple selectors for email
-            email_selectors = ['input[placeholder="Enter your active Email ID / Username"]', '#usernameField', 'input[type="email"]', 'input[name="username"]', 'input[placeholder*="email"]']
-            email_input = None
-            for selector in email_selectors:
-                try:
-                    email_input = page.locator(selector).first
-                    email_input.wait_for(state='visible', timeout=5000)
-                    break
-                except:
-                    continue
-            if not email_input:
-                logging.error("Email input field not found")
-                page.screenshot(path='email_not_found.png')
-                browser.close()
-                return "Login Failed"
-            logging.info(f"Filling email: {self.email}")
-            self.slow_type(email_input, self.email)
-            self.human_delay()
-            # Debug: Check filled value
-            filled_email = email_input.input_value()
-            logging.info(f"Email field filled with: {filled_email}")
-            if filled_email != self.email:
-                logging.error("Email not filled correctly!")
-
-            # Fill password
-            logging.info("Filling password")
-            # Try multiple selectors for password
-            password_selectors = ['input[placeholder="Enter your password"]', '#passwordField', 'input[type="password"]', 'input[name="password"]']
-            password_input = None
-            for selector in password_selectors:
-                try:
-                    password_input = page.locator(selector).first
-                    if password_input.is_visible():
-                        break
-                except:
-                    continue
-            if not password_input:
-                logging.error("Password input field not found")
-                page.screenshot(path='password_not_found.png')
-                browser.close()
-                return "Login Failed"
-            self.slow_type(password_input, self.password)
-            self.human_delay()
-            # Debug: Check filled value (password might be masked, but check length)
-            filled_password = password_input.input_value()
-            logging.info(f"Password field length: {len(filled_password)} (expected: {len(self.password)})")
-            if len(filled_password) != len(self.password):
-                logging.error("Password not filled correctly!")
-
-            # Submit
-            logging.info("Submitting login form")
-            submit_selectors = ['button[type="submit"]', 'button:contains("Login")', 'input[type="submit"]']
-            submit_button = None
-            for selector in submit_selectors:
-                try:
-                    submit_button = page.locator(selector).first
-                    if submit_button.is_visible():
-                        break
-                except:
-                    continue
-            if not submit_button:
-                logging.error("Submit button not found")
-                page.screenshot(path='submit_not_found.png')
-                browser.close()
-                return "Login Failed"
-            submit_button.click()
-            self.human_delay(2, 5)  # Wait a bit longer for login
-
-            # Check for success
-            logging.info("Checking for login success indicator")
-            page.wait_for_load_state('networkidle')
-            self.human_delay(1, 2)
+    def find_first_visible(
+        self,
+        page: Page,
+        selectors: Iterable[str],
+        timeout_ms: int = 5000,
+    ) -> Locator | None:
+        for selector in selectors:
+            locator = page.locator(selector).first
             try:
-                if self.is_login_successful(page):
-                    logging.info("Login successful")
-                    if self.close_post_login_popup(page):
-                        logging.info("Post-login popup closed")
-                    else:
-                        logging.info("No popup to close after login")
-                    self.save_cookies(context)
-                    browser.close()
-                    return "Login Successful"
-                logging.error("Login not successful: success indicators not found")
-            except Exception as e:
-                logging.error(f"Login failed: {e}")
-
-            # Check for error messages
-            error_locator = page.locator('.error-msg')
-            try:
-                if error_locator.is_visible():
-                    error_msg = error_locator.text_content()
-                    logging.error(f"Error message: {error_msg}")
-                else:
-                    logging.error("No error message visible")
+                locator.wait_for(state="visible", timeout=timeout_ms)
+                return locator
+            except PlaywrightTimeoutError:
+                continue
             except Exception:
-                logging.error("Unable to read error message")
-            # Take screenshot for debug
-            page.screenshot(path='login_failure.png')
-            logging.info("Screenshot saved as login_failure.png")
-            browser.close()
-            return "Login Failed"
+                continue
+        return None
+
+    def _goto_home(self, page: Page) -> None:
+        LOGGER.info("Navigating to %s", self.config.base_url)
+        page.goto(
+            self.config.base_url,
+            wait_until="domcontentloaded",
+            timeout=self.config.navigation_timeout_ms,
+        )
+
+    def _require_credentials(self) -> None:
+        if self.email and self.password:
+            return
+        raise ValueError(
+            "NAUKRI_EMAIL and NAUKRI_PASSWORD must be set in the .env file when a new login is required."
+        )
+
 
 if __name__ == "__main__":
-    login_module = NaukriLogin()
-    result = login_module.login()
-    print(result)
+    configure_logging()
+    client = NaukriLogin()
+    print(client.login())

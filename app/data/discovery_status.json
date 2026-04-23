@@ -1,0 +1,21 @@
+{
+  "running": true,
+  "startedAt": "2026-04-23T16:14:34Z",
+  "finishedAt": null,
+  "lastResult": null,
+  "lastError": "",
+  "locations": [
+    "Bangalore",
+    "Chennai",
+    "Hyderabad"
+  ],
+  "pid": 18072,
+  "progress": {
+    "currentLocation": "Bangalore",
+    "currentPage": 2,
+    "jobsFound": 40,
+    "jobsSaved": 2,
+    "lastMessage": "Bangalore page 2: 2 jobs extracted",
+    "updatedAt": "2026-04-23T16:15:00Z"
+  }
+}
